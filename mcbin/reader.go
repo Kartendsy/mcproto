@@ -1,139 +1,144 @@
-package bin
+package packet
 
 import (
-	"bufio"
 	"encoding/binary"
 	"errors"
-	"io"
 	"math"
 )
 
 type Reader struct {
-	reader *bufio.Reader
+	buf []byte
+	off int
+	err error
 }
 
-func NewReader(r io.Reader) *Reader {
-	return &Reader{
-		reader: bufio.NewReader(r),
+func NewReader(data []byte) *Reader {
+	return &Reader{buf: data}
+}
+
+func (r *Reader) VarInt() int32 {
+	if r.err != nil {
+		return 0
 	}
-}
+	var val uint32
+	var size int
 
-func (r *Reader) ReadByte() (byte, error) {
-	return r.reader.ReadByte()
-}
-
-func (r *Reader) ReadVarInt() (int32, error) {
-	var value uint32
-	var pos int32
 	for {
-		currByte, err := r.reader.ReadByte()
-		if err != nil {
-			return 0, err
+		if r.off >= len(r.buf) {
+			r.err = errors.New("eof")
+			return 0
 		}
-		value |= uint32(currByte&0x7F) << uint32(pos)
-		if (currByte & 0x80) == 0 {
+
+		b := r.buf[r.off]
+		r.off++
+		val |= uint32(b&0x7F) << (size * 7)
+		size++
+		if b&0x80 == 0 {
 			break
 		}
-
-		pos += 7
-		if pos >= 32 {
-			return 0, errors.New("VarInt too big")
-		}
 	}
-	return int32(value), nil
+
+	return int32(val)
 }
 
-func (r *Reader) ReadShort() (int16, error) {
-	var bf [2]byte
-	if _, err := io.ReadFull(r.reader, bf[:]); err != nil {
-		return 0, err
+func (r *Reader) String() string {
+	if r.err != nil {
+		return ""
 	}
-	return int16(binary.BigEndian.Uint16(bf[:])), nil
+	length := int(r.VarInt())
+	if r.off+length > len(r.buf) {
+		r.err = errors.New("string length overflow")
+		return ""
+	}
+
+	res := string(r.buf[r.off : r.off+length])
+	r.off += length
+	return res
 }
 
-func (r *Reader) ReadUnsignedShort() (uint16, error) {
-	var bf [2]byte
-	if _, err := io.ReadFull(r.reader, bf[:]); err != nil {
-		return 0, err
+func (r *Reader) Byte() int8 {
+	if r.err != nil {
+		return 0
 	}
-	return binary.BigEndian.Uint16(bf[:]), nil
+	if r.off >= len(r.buf) {
+		r.err = errors.New("eof byte")
+		return 0
+	}
+
+	val := int8(r.buf[r.off])
+	r.off++
+	return val
 }
 
-func (r *Reader) ReadInt() (int32, error) {
-	var bf [4]byte
-	if _, err := io.ReadFull(r.reader, bf[:]); err != nil {
-		return 0, err
-	}
-	return int32(binary.BigEndian.Uint32(bf[:])), nil
+func (r *Reader) Short() int16 {
+	return int16(r.UShort())
 }
 
-func (r *Reader) ReadLong() (int64, error) {
-	var bf [8]byte
-	if _, err := io.ReadFull(r.reader, bf[:]); err != nil {
-		return 0, err
-	}
-	return int64(binary.BigEndian.Uint64(bf[:])), nil
+func (r *Reader) Int() int32 {
+	return int32(r.UInt())
 }
 
-func (r *Reader) ReadFloat() (float32, error) {
-	var bf [4]byte
-	if _, err := io.ReadFull(r.reader, bf[:]); err != nil {
-		return 0, nil
-	}
-	return math.Float32frombits(binary.BigEndian.Uint32(bf[:])), nil
+func (r *Reader) UByte() uint8 {
+	return uint8(r.Byte())
 }
 
-func (r *Reader) ReadDouble() (float64, error) {
-	var bf [8]byte
-	if _, err := io.ReadFull(r.reader, bf[:]); err != nil {
-		return 0, err
+func (r *Reader) UShort() uint16 {
+	if r.err != nil {
+		return 0
 	}
-	return math.Float64frombits(binary.BigEndian.Uint64(bf[:])), nil
+	if r.off+2 > len(r.buf) {
+		r.err = errors.New("eof ushort")
+		return 0
+	}
+	val := binary.BigEndian.Uint16(r.buf[r.off : r.off+2])
+	r.off += 2
+	return val
 }
 
-func (r *Reader) ReadBool() (bool, error) {
-	val, err := r.ReadByte()
-	return val != 0, err
+func (r *Reader) UInt() uint32 {
+	if r.err != nil {
+		return 0
+	}
+	if r.off+4 > len(r.buf) {
+		r.err = errors.New("eof uint")
+		return 0
+	}
+	val := binary.BigEndian.Uint32(r.buf[r.off : r.off+4])
+	r.off += 4
+	return val
 }
 
-func (r *Reader) ReadString() (string, error) {
-	length, err := r.ReadVarInt()
-	if err != nil {
-		return "", err
-	}
-	if length < 0 || length > 32767 {
-		return "", errors.New("too long")
-	}
-	bf := make([]byte, length)
-	if _, err := io.ReadFull(r.reader, bf); err != nil {
-		return "", err
-	}
-	return string(bf), nil
+func (r *Reader) Float() float32 {
+	return math.Float32frombits(r.UInt())
 }
 
-func (r *Reader) ReadPosition() (int32, int32, int32, error) {
-	val, err := r.ReadLong()
-	if err != nil {
-		return 0, 0, 0, err
+func (r *Reader) Double() float64 {
+	if r.err != nil {
+		return 0
+	}
+	if r.off+8 > len(r.buf) {
+		r.err = errors.New("eof double")
+		return 0
 	}
 
-	x := int32(val >> 38)
-	y := int32((val >> 26) & 0xFFF)
-	z := int32(val << 38 >> 38)
-	return x, y, z, nil
+	val := binary.BigEndian.Uint64(r.buf[r.off : r.off+8])
+	r.off += 8
+	return math.Float64frombits(val)
 }
 
-func (r *Reader) ReadBytes(n int) ([]byte, error) {
-	bf := make([]byte, n)
-	_, err := io.ReadFull(r.reader, bf)
-	return bf, err
-}
-
-func (r *Reader) ReadPacket() ([]byte, int32, error) {
-	length, err := r.ReadVarInt()
-	if err != nil {
-		return nil, 0, err
+func (r *Reader) Bytes(n int) []byte {
+	if r.err != nil {
+		return nil
 	}
-	data, err := r.ReadBytes(int(length))
-	return data, length, err
+	if r.off+n > len(r.buf) {
+		r.err = errors.New("eof bytes")
+		return nil
+	}
+	val := r.buf[r.off : r.off+n]
+	r.off += n
+	return val
+}
+
+func (r *Reader) Error() error {
+	return r.err
 }

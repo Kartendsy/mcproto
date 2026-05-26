@@ -78,6 +78,20 @@ func (r *Reader) Int() int32 {
 	return int32(r.UInt())
 }
 
+func (r *Reader) Long() int64 {
+	if r.err != nil {
+		return 0
+	}
+	if r.off+8 > len(r.buf) {
+		r.err = errors.New("eof long")
+		return 0
+	}
+
+	val := binary.BigEndian.Uint64(r.buf[r.off : r.off+8])
+	r.off += 8
+	return int64(val)
+}
+
 func (r *Reader) UByte() uint8 {
 	return uint8(r.Byte())
 }
@@ -137,6 +151,10 @@ func (r *Reader) Bytes(n int) []byte {
 	val := r.buf[r.off : r.off+n]
 	r.off += n
 	return val
+}
+
+func (r *Reader) Offset() int {
+	return r.off
 }
 
 func (r *Reader) Error() error {

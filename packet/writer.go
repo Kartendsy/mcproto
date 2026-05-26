@@ -2,6 +2,7 @@ package packet
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 )
 
@@ -10,7 +11,12 @@ type Writer struct {
 }
 
 func NewWriter() *Writer {
-	return &Writer{buf: make([]byte, 0)}
+	return &Writer{buf: make([]byte, 0, 32)}
+}
+
+func (w *Writer) Reset() *Writer {
+	w.buf = w.buf[:0]
+	return w
 }
 
 // Variable Length
@@ -48,6 +54,13 @@ func (w *Writer) Short(v int16) *Writer {
 func (w *Writer) Int(v int32) *Writer {
 	b := make([]byte, 4)
 	binary.BigEndian.PutUint32(b, uint32(v))
+	w.buf = append(w.buf, b...)
+	return w
+}
+
+func (w *Writer) Long(v int64) *Writer {
+	b := make([]byte, 8)
+	binary.BigEndian.PutUint64(b, uint64(v))
 	w.buf = append(w.buf, b...)
 	return w
 }
@@ -95,10 +108,20 @@ func (w *Writer) Bytes(v []byte) *Writer {
 }
 
 func (w *Writer) Build(packetID int32) []byte {
-	body := NewWriter().VarInt(packetID).Bytes(w.buf).buf
-	return NewWriter().VarInt(int32(len(body))).Bytes(body).buf
+	bodyWriter := NewWriter().VarInt(packetID).Bytes(w.buf)
+	bodyLen := int32(len(bodyWriter.buf))
+
+	finalWriter := NewWriter()
+	finalWriter.VarInt(bodyLen)
+	finalWriter.Bytes(bodyWriter.buf)
+
+	return finalWriter.buf
 }
 
 func (w *Writer) Raw() []byte {
 	return w.buf
+}
+
+func (w *Writer) Hex() string {
+	return fmt.Sprintf("%x", w.buf)
 }

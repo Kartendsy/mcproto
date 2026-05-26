@@ -1,3 +1,3 @@
-module github.com/Kartendsy/mc1.8.x-bin
+module github.com/Kartendsy/mcproto
 
 go 1.25.7
